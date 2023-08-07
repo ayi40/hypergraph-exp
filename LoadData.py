@@ -6,21 +6,37 @@ import scipy.sparse as sp
 
 from copy import deepcopy
 import torch
+import os
 
 
 class LoadData(object):
-    def __init__(self, datapath, simple_kg_file):
+    def __init__(self, kg_file, simple_kg_file):
         # config
-        kg_file = datapath
+        kg_file = kg_file
         simple_kg_file = simple_kg_file
+        path = kg_file.rsplit('/', 1)[0]
+        self.pathlen = 7
 
+
+
+        # load ui-graph
+        self.train_data, self.train_user_dict = self._load_uigraph(os.path.join(path, 'train.txt'))
+        self.test_data, self.test_user_dict = self._load_uigraph(os.path.join(path, 'test.txt'))
+        self.n_users, self.n_items, self.n_train, self.n_test = self.statistic()
+
+        # load kg and simple kg
         self.n_relations, self.n_entities, self.n_edges = 0, 0, 0
         self.kg_data, self.kg_dict_head, self.kg_dict_tail, self.relation_dict = self._load_kg(kg_file,simple=False)
 
         self.simple_kg, self.ns_entities, self.ns_edges = self._load_kg(simple_kg_file, simple=True)
 
-        print(self.n_relations, self.n_entities, self.n_edges)
-        print(self.ns_entities, self.ns_edges)
+        # load path
+        self.padding_idx = self.n_entities
+        self.path,self.path_dic = self._load_kgpath(os.path.join(path, 'path.txt'))
+
+
+        print('relation num:{}, entities num:{}, edges num:{}'.format(self.n_relations, self.n_entities, self.n_edges))
+        # print(self.ns_entities, self.ns_edges)
 
         # generate the hypergraph adjacency
         # hyper-head=hyper-out, hyper-tail=hyper-in
@@ -32,9 +48,8 @@ class LoadData(object):
 
         # without multi edge_weight
         self.H_in = self.set_norm(self.hyper_in, self.hyper_out)
-        self.H_out = self.set_norm(self.hyper_out, self.hyper_in)
-        print(self.H_in.shape, self.H_out.shape)
-        self.H_in_fold, self.H_out_fold = self._cut_matrix(self.H_in, 100), self._cut_matrix(self.H_out, 100)
+        # self.H_out = self.set_norm(self.hyper_out, self.hyper_in)
+        self.H_in_fold = self._cut_matrix(self.H_in, 100)
         self.hedge_wei = self.convert_coo2tensor(self.hedge_wei)
 
         # self.in_norm, self.outT_norm, self.hedge_wei= self.convert_coo2tensor(self.in_norm.tocoo()), \
@@ -67,12 +82,49 @@ class LoadData(object):
         else:
             kg_np = np.loadtxt(file_name, dtype=np.int32)
             kg_np = np.unique(kg_np, axis=0)
-
-
             n_entities = max(max(kg_np[:, 0]), max(kg_np[:, 2])) + 1
             n_edges = len(kg_np)
 
             return kg_np, n_entities, n_edges
+
+    def _load_uigraph(self, file_name):
+        data = list()
+        user_dict = dict()
+
+        lines = open(file_name, 'r').readlines()
+        for l in lines:
+            l = l.strip()
+            l = [int(i) for i in l.split(' ')]
+            u_id, v_id = l[0], l[1:]
+            v_id = list(set(v_id))
+
+            for v in v_id:
+                data.append([u_id, v])
+            if len(v_id)>0:
+                user_dict[u_id] = v_id
+        return np.array(data), user_dict
+
+    def _load_kgpath(self,file_name):
+        all_path=list()
+        path_dict = collections.defaultdict(lambda: collections.defaultdict(list))
+        lines = open(file_name,'r').readlines()
+        for l in lines:
+            l = l.strip()
+            l = [int(i) for i in l.split(' ')]
+            h, t = l[0], l[-1]
+            if len(l) < self.pathlen:
+                l = l+[self.padding_idx]*(self.pathlen-len(l))
+            all_path.append(l)
+            path_dict[h][t].append(l)
+        return all_path, path_dict
+
+    def statistic(self):
+        n_users = max(max(self.train_data[:, 0]), max(self.test_data[:, 0])) + 1
+        n_items = max(max(self.train_data[:, 1]), max(self.test_data[:, 1])) + 1
+        n_train = len(self.train_data)
+        n_test = len(self.test_data)
+        return n_users, n_items, n_train, n_test
+
 
     def build_simple_hypergraph(self):
         cols = np.arange(0, self.ns_edges, 1)
@@ -112,19 +164,6 @@ class LoadData(object):
         v = torch.FloatTensor(values)
         return torch.sparse.FloatTensor(i, v, torch.Size(coo.shape))
 
-
-    # def _matrix_dot(self, A, B, n_fold):
-    #     A_fold = self._cut_matrix(A, n_fold)
-    #     for i in range(n_fold):
-    #         r = i.dot(B)
-    #         print(len(A_fold[i].data))
-    #         sp.save_npz('test.npz', r, compressed=True)
-    #         print(i)
-    #         del r
-        # res = np.concatenate(res, axis=1)
-        # print(res.shape)
-
-
     def _cut_matrix(self, matrix, n_fold):
         matrix_fold = []
         fold_len = matrix.shape[0] // n_fold
@@ -141,16 +180,3 @@ class LoadData(object):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-# data = LoadData(datapath='./dataset/last-fm.txt',simple_kg_file='./dataset/last-fm-simple.txt')
