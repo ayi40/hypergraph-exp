@@ -47,7 +47,8 @@ class MODEL(nn.Module):
         self.MLPfuse = nn.Linear((self.dhgcn_layer+1)*self.embed_dim, self.embed_dim)
         self.activationfuse = nn.LeakyReLU()
         # LSTM
-        self.LSTM = nn.LSTM(input_size=self.embed_dim, hidden_size=64, num_layers=2, batch_first=True)
+        self.LSTM = nn.LSTM(input_size=self.embed_dim, hidden_size=self.embed_dim, num_layers=1, batch_first=True)
+        self.lstm_linear = nn.Linear(self.embed_dim, 1)
         self.activationlstm = nn.Sigmoid()
 
 
@@ -65,9 +66,9 @@ class MODEL(nn.Module):
         self.edge_attr = config['edge_attr']
 
         # args
-        self.embed_dim = 64
+        self.embed_dim = 32
         self.dhgcn_layer = 2
-        self.weight_size_list = [64, 64, 64]
+        self.weight_size_list = [32, 32, 32]
         self.batchsize = config['bz']
         self.pathlen = 7
 
@@ -76,6 +77,8 @@ class MODEL(nn.Module):
         self.all_embedding = nn.Embedding(self.n_entities+1, self.embed_dim, padding_idx=self.padding_idx)
         nn.init.xavier_uniform_(self.all_embedding.weight)
         self.edge_embedding = nn.Embedding(self.ns_edges, self.embed_dim)
+        nn.init.xavier_uniform_(self.edge_embedding.weight)
+        self.virtual_embedding = nn.Embedding(1, self.embed_dim)
         nn.init.xavier_uniform_(self.edge_embedding.weight)
         # personal relation
         self.user_relation = nn.Embedding(self.n_relations*self.n_users, self.embed_dim)
@@ -94,7 +97,7 @@ class MODEL(nn.Module):
         all_embedding = torch.concatenate(all_embedding, axis=1)
         kg_embed = []
         for i in range(self.n_relations):
-            kg_embed.append(torch.sum(all_embedding[self.edge_attr == i], dim=0, keepdim=True))
+            kg_embed.append(torch.mean(all_embedding[self.edge_attr == i], dim=0, keepdim=True))
         kg_embed = torch.concatenate(kg_embed, axis=0)
         kg_embed = self.activationfuse(self.MLPfuse(kg_embed))
         return kg_embed
@@ -110,28 +113,34 @@ class MODEL(nn.Module):
         co_embed = kgr_embed*per_embed
         return co_embed
 
-    def _cal_pro(self, co_embed, path, path_idx):
+    def _cal_score(self, co_embed, path, path_idx):
+        # Embedding
         mask = torch.arange(0, path.shape[1])
         relation_mask = (mask % 2) == 1
         relation_mask = relation_mask.to(device)
-        ######user-item咋办
         relation_mask = (path != self.padding_idx) & relation_mask
 
         relation_embedding = path[relation_mask]
         relation_attr = path_idx.reshape(path.shape[0],1).repeat(1, path.shape[1])
         relation_attr = relation_attr[relation_mask]
-        print(relation_attr,relation_embedding)
-        relation_embedding = [co_embed[relation_attr[i], relation_embedding[i]] for i in range(len(relation_embedding))]
-        print(relation_embedding.shape, relation_embedding)
-        # relation_embedding = co_embed[relation_embedding]
+        relation_embedding = torch.stack([co_embed[relation_attr[i], relation_embedding[i]] for i in range(len(relation_embedding))], axis=0)
 
-        
-        # k = torch.zeros(path.shape)
-        # a=torch.ones(k[relation_mask].shape)
-        # print(k,a)
-        # k[relation_mask]=a
-        # print(k)
-        exit()
+        x = self.all_embedding(path)
+        x[relation_mask] = relation_embedding
+
+        #LSTM
+        x, (_, _) = self.LSTM(x)
+        x = x[:, -1, :]
+        x = self.lstm_linear(x)
+        x = self.activationlstm(x)
+
+
+        score = []
+        for i in range(max(path_idx)+1):
+            score.append(torch.sum(x[path_idx == i], dim=0, keepdim=True))
+        score = torch.concatenate(score, axis=0)
+        return score
+
 
 
 
@@ -140,7 +149,14 @@ class MODEL(nn.Module):
     def forward(self, users, pos_sample, neg_sample, pos_path, neg_path, pos_path_idx, neg_path_idx):
         kgr_embed = self._cal_kg_egde()
         co_embed = self._co_atten(kgr_embed, users)
-        self._cal_pro(co_embed, pos_path, pos_path_idx)
+        ve = self.virtual_embedding.weight
+        ve = torch.reshape(ve, (1, 1, self.embed_dim)).repeat(self.batchsize, 1, 1)
+        co_embed = torch.cat((co_embed,ve), axis=1)
+
+        pos_score = self._cal_score(co_embed, pos_path, pos_path_idx)
+        neg_score = self._cal_score(co_embed, neg_path, neg_path_idx)
+
+        return pos_score, neg_score
 
 
 

@@ -27,6 +27,7 @@ class LoadData(object):
         # load kg and simple kg
         self.n_relations, self.n_entities, self.n_edges = 0, 0, 0
         self.kg_data, self.kg_dict_head, self.kg_dict_tail, self.relation_dict = self._load_kg(kg_file,simple=False)
+        self.virtual_relation = self.n_relations
 
         self.simple_kg, self.ns_entities, self.ns_edges = self._load_kg(simple_kg_file, simple=True)
 
