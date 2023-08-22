@@ -20,9 +20,13 @@ class LoadData(object):
 
 
         # load ui-graph
-        self.train_data, self.train_user_dict = self._load_uigraph(os.path.join(path, 'train.txt'))
-        self.test_data, self.test_user_dict = self._load_uigraph(os.path.join(path, 'test.txt'))
+        self.train_data, self.train_user_dict = self._load_uigraph(os.path.join(path, 'mini', 'train.txt'))
+        self.test_data, self.test_user_dict = self._load_uigraph(os.path.join(path, 'mini', 'test.txt'))
+
+        print('train_data:{}, test_data:{}'.format(len(self.train_data), len(self.test_data)))
         self.n_users, self.n_items, self.n_train, self.n_test = self.statistic()
+        print('n_user:{}, n_item:{}'.format(self.n_users, self.n_items))
+        self._fix_item_index()
 
         # load kg and simple kg
         self.n_relations, self.n_entities, self.n_edges = 0, 0, 0
@@ -103,7 +107,15 @@ class LoadData(object):
                 data.append([u_id, v])
             if len(v_id)>0:
                 user_dict[u_id] = v_id
-        return np.array(data), user_dict
+        return np.unique(np.array(data), axis=0), user_dict
+
+    def _fix_item_index(self):
+        self.train_data[:, 1] += self.n_users
+        self.test_data[:, 1] += self.n_users
+        for key in self.train_user_dict:
+            self.train_user_dict[key] = [i + self.n_users for i in self.train_user_dict[key]]
+        for key in self.test_user_dict:
+            self.test_user_dict[key] = [i + self.n_users for i in self.test_user_dict[key]]
 
     def _load_kgpath(self,file_name):
         all_path=list()

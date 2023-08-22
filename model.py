@@ -47,7 +47,7 @@ class MODEL(nn.Module):
         self.MLPfuse = nn.Linear((self.dhgcn_layer+1)*self.embed_dim, self.embed_dim)
         self.activationfuse = nn.LeakyReLU()
         # LSTM
-        self.LSTM = nn.LSTM(input_size=self.embed_dim, hidden_size=self.embed_dim, num_layers=1, batch_first=True)
+        self.RNN = nn.RNN(input_size=self.embed_dim, hidden_size=self.embed_dim, num_layers=1, batch_first=True)
         self.lstm_linear = nn.Linear(self.embed_dim, 1)
         self.activationlstm = nn.Sigmoid()
 
@@ -66,9 +66,9 @@ class MODEL(nn.Module):
         self.edge_attr = config['edge_attr']
 
         # args
-        self.embed_dim = 32
+        self.embed_dim = 64
         self.dhgcn_layer = 2
-        self.weight_size_list = [32, 32, 32]
+        self.weight_size_list = [self.embed_dim, self.embed_dim, self.embed_dim]
         self.batchsize = config['bz']
         self.pathlen = 7
 
@@ -102,9 +102,9 @@ class MODEL(nn.Module):
         kg_embed = self.activationfuse(self.MLPfuse(kg_embed))
         return kg_embed
 
-    def _co_atten(self, kgr_embed, users):
+    def _co_atten(self, kgr_embed, users, realbz):
         per_embed=[]
-        kgr_embed = [kgr_embed for _ in range(self.batchsize)]
+        kgr_embed = [kgr_embed for _ in range(realbz)]
         kgr_embed = torch.stack(kgr_embed, axis=0)
         for u in users:
             per_embed.append(self.user_relation.weight[int(u * self.n_relations):int((u + 1) * self.n_relations)])
@@ -121,7 +121,7 @@ class MODEL(nn.Module):
         relation_mask = (path != self.padding_idx) & relation_mask
 
         relation_embedding = path[relation_mask]
-        relation_attr = path_idx.reshape(path.shape[0],1).repeat(1, path.shape[1])
+        relation_attr = path_idx.reshape(path.shape[0], 1).repeat(1, path.shape[1])
         relation_attr = relation_attr[relation_mask]
         relation_embedding = torch.stack([co_embed[relation_attr[i], relation_embedding[i]] for i in range(len(relation_embedding))], axis=0)
 
@@ -129,7 +129,7 @@ class MODEL(nn.Module):
         x[relation_mask] = relation_embedding
 
         #LSTM
-        x, (_, _) = self.LSTM(x)
+        x, _ = self.RNN(x)
         x = x[:, -1, :]
         x = self.lstm_linear(x)
         x = self.activationlstm(x)
@@ -141,22 +141,40 @@ class MODEL(nn.Module):
         score = torch.concatenate(score, axis=0)
         return score
 
-
-
-
-
-
-    def forward(self, users, pos_sample, neg_sample, pos_path, neg_path, pos_path_idx, neg_path_idx):
+    def train_process(self, users, pos_path, neg_path, pos_path_idx, neg_path_idx):
+        realbz = users.shape[0]
         kgr_embed = self._cal_kg_egde()
-        co_embed = self._co_atten(kgr_embed, users)
+        co_embed = self._co_atten(kgr_embed, users, realbz)
+        # add virtual relation from target user to target item
         ve = self.virtual_embedding.weight
-        ve = torch.reshape(ve, (1, 1, self.embed_dim)).repeat(self.batchsize, 1, 1)
-        co_embed = torch.cat((co_embed,ve), axis=1)
+        ve = torch.reshape(ve, (1, 1, self.embed_dim)).repeat(realbz, 1, 1)
+        co_embed = torch.cat((co_embed, ve), axis=1)
 
         pos_score = self._cal_score(co_embed, pos_path, pos_path_idx)
         neg_score = self._cal_score(co_embed, neg_path, neg_path_idx)
 
         return pos_score, neg_score
+
+    def pred_process(self, users, path, path_idx):
+        realbz = users.shape[0]
+        kgr_embed = self._cal_kg_egde()
+        co_embed = self._co_atten(kgr_embed, users, realbz)
+        ve = self.virtual_embedding.weight
+        ve = torch.reshape(ve, (1, 1, self.embed_dim)).repeat(realbz, 1, 1)
+        co_embed = torch.cat((co_embed, ve), axis=1)
+
+        score = self._cal_score(co_embed, path, path_idx)
+        return score
+
+
+    def forward(self, *input, mode):
+        if mode == 'train':
+            return self.train_process(*input)
+        elif mode == 'predict':
+            return self.pred_process(*input)
+
+
+
 
 
 

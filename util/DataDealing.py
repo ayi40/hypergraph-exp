@@ -10,7 +10,7 @@ class LoadUIGraph:
         self.train_data, self.train_user_dict = self._load_uigraph(os.path.join(path, 'train.txt'))
         self.test_data, self.test_user_dict = self._load_uigraph(os.path.join(path, 'test.txt'))
         self.statistic()
-        print('user num:{}, item num:{}, train data num:{}, test data num:{}'.format(self.n_users, self.n_items, self.n_train, self.n_test))
+
 
     def _load_uigraph(self, file_name):
         data = list()
@@ -29,11 +29,25 @@ class LoadUIGraph:
                 user_dict[u_id] = v_id
         return np.array(data), user_dict
 
+    def _fix_item_index(self):
+        self.train_data[:, 1] += self.n_users
+        self.test_data[:, 1] += self.n_users
+        for key in self.train_user_dict:
+            self.train_user_dict[key] = [i + self.n_users for i in self.train_user_dict[key]]
+        for key in self.test_user_dict:
+            self.test_user_dict[key] = [i + self.n_users for i in self.test_user_dict[key]]
+
+
+
+
+
     def statistic(self):
-        self.n_users = max(max(self.train_data[:, 0]), max(self.test_data[:, 0])) + 1
-        self.n_items = max(max(self.train_data[:, 1]), max(self.test_data[:, 1])) + 1
+        self.n_users = max(max(self.train_data[:, 0]), max(self.test_data[:, 0])) - min(min(self.train_data[:, 0]), min(self.test_data[:, 0])) + 1
+        self.n_items = max(max(self.train_data[:, 1]), max(self.test_data[:, 1])) - min(min(self.train_data[:, 1]), min(self.test_data[:, 1])) + 1
         self.n_train = len(self.train_data)
         self.n_test = len(self.test_data)
+        print('user num:{}, item num:{}, train data num:{}, test data num:{}'.format(self.n_users, self.n_items,
+                                                                                     self.n_train, self.n_test))
 
 
 class LoadKG:
@@ -178,12 +192,13 @@ class DealingData:
         kg_simple = np.array(kg_simple)
         kg.data = kg_simple
         kg.statistic()
-        LoadKG.save_kg('../dataset/last-fmtest.txt',kg_simple)
+        LoadKG.save_kg('../dataset/last-fmtest-test.txt',kg_simple)
 
     @staticmethod
     def get_user2item_path(kg, ui, pathlen, savepath):
         path_dic = collections.defaultdict(list)
-        for i in range(ui.n_users):
+        # for i in range(ui.n_users):
+        for i in range(0,3000):
             print(i)
             unfind = [[i]]
             find=[]
@@ -202,6 +217,7 @@ class DealingData:
                             find.append(new_path)
                     else:
                         unfind.append(new_path)
+            print(len(find))
             path_dic[i]=find
         path=[]
         for i in path_dic:
@@ -219,12 +235,11 @@ class DealingData:
 
 
 
-# kg = LoadKG('../dataset/last-fm-ckg-oppo.txt')
-# ui = LoadUIGraph('../dataset/')
+kg = LoadKG('../dataset/mini/last-fm-ckg-oppo.txt')
+# ui = LoadUIGraph('../dataset/mini')
+# ui._fix_item_index()
+# ui.statistic()
 # # # DealingData.combine_ckg(kg, ui, savepath ='../dataset/last-fm-ckg-oppo.txt')
-# DealingData.get_user2item_path(kg, ui, 7, '../dataset/last-fm_path.txt')
-# # # DealingData.simple_kg(kg,seed_num=500, hop_num=2, limit_num=4)
-
-
-
+# DealingData.get_user2item_path(kg, ui, 7, '../dataset/mini/path.txt')
+DealingData.simple_kg(kg, seed_num=100, hop_num=2, limit_num=2)
 
