@@ -37,7 +37,7 @@ class LoadData(object):
 
         # load path
         self.padding_idx = self.n_entities
-        self.path,self.path_dic = self._load_kgpath(os.path.join(path, 'path.txt'))
+        self.path,self.path_dic = self._load_kgpath(os.path.join(path, 'path_5.txt'))
 
 
         print('relation num:{}, entities num:{}, edges num:{}'.format(self.n_relations, self.n_entities, self.n_edges))

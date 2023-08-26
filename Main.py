@@ -10,6 +10,7 @@ import gc
 from random import sample
 from time import time
 from util.metrics import *
+from torch.utils.tensorboard import SummaryWriter
 
 
 def cal_loss(pos_score, neg_score):
@@ -24,7 +25,8 @@ def eval(model, data, bs, device, Ks, mode):
     model.eval()
     user_ids = list(test_user_dict.keys())
     if mode=='mini-test':
-        user_ids = sample(user_ids,50)
+        # user_ids = sample(user_ids,50)
+        user_ids = user_ids[:30]
     item_ids = torch.arange(data.n_items, dtype=torch.long)
     item_ids+=data.n_users
 
@@ -67,11 +69,12 @@ def eval(model, data, bs, device, Ks, mode):
     return cf_scores, metrics_dict
 
 
+
 def train():
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    data = LoadData(kg_file='./dataset/last-fm-ckg-oppo.txt',simple_kg_file='./dataset/last-fm-simple.txt')
+    data = LoadData(kg_file='./dataset/ckg_final.txt',simple_kg_file='./dataset/last-fm-simple.txt')
 
     print('Load Data Success')
     config={}
@@ -91,26 +94,32 @@ def train():
 
     # config
     config['bz'] = 3000
-    lr=1e-5
+    lr=1e-4
     n_epoch = 20
 
     # initial model
     model = MODEL(config)
     model.to(device)
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr, weight_decay=0.0001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.001)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma = 0.8)
 
     # Load DataLoader
     train_dataset = Dataset(data.train_data, data.train_user_dict, data.n_items, 'train')
     train_loader = DataLoader(train_dataset, batch_size=config['bz'], shuffle=True, drop_last=True)
 
     n_batch = data.n_train // config['bz'] + 1
+    writer = SummaryWriter('./result/whole_data')
     print(n_batch)
-
+    _, metrics_dict = eval(model, data, 50000, device=device, Ks=[20, 40], mode='mini-test')
+    writer.add_scalar('ndcg40', metrics_dict[40]['ndcg'], 0)
+    writer.add_scalar('precision40', metrics_dict[40]['precision'], 0)
     for epoch in range(1, n_epoch + 1):
+
+        start_time = time()
         total_loss=0
+        model.train()
         for batch_ndx, train_data in enumerate(train_loader):
-            model.train()
             u, pos_i, neg_i = train_data
             # print(u.shape, pos_i.shape, neg_i.shape)
             pos_path, pos_path_idx = utils.find_uipath_batch(u, pos_i, data.path_dic, data.pathlen, data.padding_idx, data.virtual_relation)
@@ -118,20 +127,29 @@ def train():
             u, pos_i, neg_i, pos_path, neg_path, pos_path_idx, neg_path_idx = (u.to(device), pos_i.to(device), neg_i.to(device),
                                                                                pos_path.to(device), neg_path.to(device),
                                                                                pos_path_idx.to(device), neg_path_idx.to(device))
+
             pos_score, neg_score = model(u, pos_path, neg_path, pos_path_idx, neg_path_idx, mode='train')
             loss = cal_loss(pos_score, neg_score)
+            writer.add_scalar('loss', loss, (epoch-1)*n_batch+batch_ndx)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
+            scheduler.step()
+
             total_loss += loss
 
-            if (batch_ndx+1) % 55 == 0:
+            if (batch_ndx+1) % 100 == 0:
                 print('Training: Epoch {:04d} batch {:04d}|  Iter Mean Loss {:.4f}'.format(epoch, batch_ndx,
                                                                                                  loss))
 
+        print(time()-start_time)
         print(
             'Training: Epoch {:04d} |  Iter Mean Loss {:.4f}'.format(epoch, total_loss / n_batch))
-        eval(model, data, 50000, device=device, Ks=[20, 40, 10000], mode='mini-test')
+        cf_scores, metrics_dict = eval(model, data, 50000, device=device, Ks=[20, 40], mode='mini-test')
+        writer.add_scalar('ndcg40', metrics_dict[40]['ndcg'], epoch)
+        writer.add_scalar('precision40', metrics_dict[40]['precision'], epoch)
+    writer.close()
+
 
 
 

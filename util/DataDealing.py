@@ -51,8 +51,10 @@ class LoadUIGraph:
 
 
 class LoadKG:
-    def __init__(self, path):
+    def __init__(self, path, n_users=0):
         self.load_kg(path)
+        if n_users != 0:
+            self._fix_index(n_users)
         self.statistic()
 
     def load_kg(self, path):
@@ -74,6 +76,10 @@ class LoadKG:
             self.kg_dict_head[head].append((head, relation, tail))
             self.kg_dict_tail[tail].append((head, relation, tail))
             self.relation_dict[relation].append((head, relation, tail))
+
+    def _fix_index(self, n_users):
+        self.data[:, 0] += n_users
+        self.data[:, 2] += n_users
 
     @staticmethod
     def save_kg(path, kgdata):
@@ -234,12 +240,11 @@ class DealingData:
 
 
 
-
-kg = LoadKG('../dataset/mini/last-fm-ckg-oppo.txt')
-# ui = LoadUIGraph('../dataset/mini')
+# #
+# ui = LoadUIGraph('../dataset/')
 # ui._fix_item_index()
 # ui.statistic()
-# # # DealingData.combine_ckg(kg, ui, savepath ='../dataset/last-fm-ckg-oppo.txt')
-# DealingData.get_user2item_path(kg, ui, 7, '../dataset/mini/path.txt')
-DealingData.simple_kg(kg, seed_num=100, hop_num=2, limit_num=2)
-
+# kg = LoadKG('../dataset/ckg_final.txt')
+# DealingData.get_user2item_path(kg, ui, 7, '../dataset/path_7.txt')
+# # DealingData.simple_kg(kg, seed_num=100, hop_num=2, limit_num=2)
+#
